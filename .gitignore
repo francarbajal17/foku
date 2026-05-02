@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# TypeScript source maps
+*.js.map
+
+# WhatsApp auth (generated on first QR scan)
+wa_auth/
+
+# App config (contains user preferences, auto-created)
+config.json
+contacts_cache.json
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Spec Kit
+.claude/
