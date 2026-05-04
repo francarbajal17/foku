@@ -4,7 +4,11 @@
     "module": "CommonJS",
     "moduleResolution": "Node",
     "outDir": "dist",
-    "rootDir": "src"
+    "rootDir": "src",
+    "paths": {},
+    "declaration": false,
+    "declarationMap": false,
+    "ignoreDeprecations": "6.0",
   },
   "include": ["src/**/*"]
 }

@@ -5,8 +5,9 @@ node_modules/
 dist/
 build/
 
-# TypeScript source maps
+# TypeScript source maps and declaration maps
 *.js.map
+*.d.ts.map
 
 # WhatsApp auth (generated on first QR scan)
 wa_auth/

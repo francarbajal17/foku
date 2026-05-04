@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import type { ConnectionStatus, WSMessage } from '@foku/shared'
 
 type ConnectionState = { status: ConnectionStatus; qr?: string; accountName?: string }
 
 let socket: WebSocket | null = null
-const listeners = new Set<(state: ConnectionState) => void>()
+const statusListeners = new Set<(state: ConnectionState) => void>()
+const contactsListeners = new Set<() => void>()
 let lastState: ConnectionState = { status: 'connecting' }
 
 function getSocket(): WebSocket {
@@ -16,8 +17,10 @@ function getSocket(): WebSocket {
     try {
       const msg = JSON.parse(event.data as string) as WSMessage
       if (msg.type === 'connection_status') {
-        lastState = { status: msg.status, qr: msg.qr }
-        listeners.forEach((fn) => fn(lastState))
+        lastState = { status: msg.status, qr: msg.qr, accountName: msg.pushName }
+        statusListeners.forEach((fn) => fn(lastState))
+      } else if (msg.type === 'contacts_updated') {
+        contactsListeners.forEach((fn) => fn())
       }
     } catch {
       // ignore malformed messages
@@ -41,13 +44,21 @@ export function useConnectionStatus(): ConnectionState {
   const [state, setState] = useState<ConnectionState>(lastState)
 
   useEffect(() => {
-    listeners.add(setState)
+    statusListeners.add(setState)
     // Sync with latest state in case it changed before mount
     setState(lastState)
     return () => {
-      listeners.delete(setState)
+      statusListeners.delete(setState)
     }
   }, [])
 
   return state
+}
+
+export function useContactsUpdated(onUpdate: () => void): void {
+  const stable = useCallback(onUpdate, [onUpdate])
+  useEffect(() => {
+    contactsListeners.add(stable)
+    return () => { contactsListeners.delete(stable) }
+  }, [stable])
 }

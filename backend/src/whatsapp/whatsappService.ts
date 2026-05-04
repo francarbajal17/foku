@@ -33,9 +33,9 @@ let sessionTimeoutId: ReturnType<typeof setTimeout> | null = null
 export function getConnectionStatus(): ConnectionStatus { return currentStatus }
 export function areContactsReady(): boolean { return contactsReady }
 
-function setStatus(status: ConnectionStatus, qr?: string) {
+function setStatus(status: ConnectionStatus, qr?: string, pushName?: string) {
   currentStatus = status
-  broadcastFn?.({ type: 'connection_status', status, ...(qr ? { qr } : {}) })
+  broadcastFn?.({ type: 'connection_status', status, ...(qr ? { qr } : {}), ...(pushName ? { pushName } : {}) })
 }
 
 function clearAuth() {
@@ -68,56 +68,76 @@ async function connect(): Promise<void> {
 
   sock.ev.on('creds.update', saveCreds)
 
+  function resolveName(c: { name?: string; notify?: string; verifiedName?: string }, fallback: string): string {
+    return c.name ?? c.notify ?? c.verifiedName ?? fallback
+  }
+
   // Fired during fresh QR scan — full contact list arrives here
   sock.ev.on('messaging-history.set', ({ contacts, chats }) => {
-    const entries: { jid: string; name: string; isGroup: boolean }[] = []
-
+    // Build a name map from the contacts array (address book names take priority)
+    const contactNameMap = new Map<string, string>()
     for (const c of contacts) {
       const jid = resolveJid(c as { id: string; jid?: string })
       if (!jid) continue
-      entries.push({
-        jid,
-        name: (c as { name?: string; notify?: string }).name
-          ?? (c as { name?: string; notify?: string }).notify
-          ?? jid.split('@')[0],
-        isGroup: isJidGroup(jid),
-      })
+      const n = resolveName(c as { name?: string; notify?: string; verifiedName?: string }, '')
+      if (n) contactNameMap.set(jid, n)
     }
 
-    // Also pull individual JIDs from chat list
+    // Build entries from all chats — chat.name is the WhatsApp display name
+    const entries: { jid: string; name: string; isGroup: boolean }[] = []
+    const seen = new Set<string>()
+
     for (const chat of chats) {
-      if (isJidUser(chat.id) && !entries.find((e) => e.jid === jidNormalizedUser(chat.id))) {
-        entries.push({
-          jid: jidNormalizedUser(chat.id),
-          name: jidNormalizedUser(chat.id).split('@')[0],
-          isGroup: false,
-        })
+      const jid = isJidUser(chat.id)
+        ? jidNormalizedUser(chat.id)
+        : isJidGroup(chat.id)
+          ? chat.id
+          : null
+      if (!jid || seen.has(jid)) continue
+      seen.add(jid)
+
+      // Priority: address-book name > chat.name > existing cache > phone number
+      const name =
+        contactNameMap.get(jid)
+        ?? (chat.name as string | null | undefined)
+        ?? getCachedContacts().get(jid)?.name
+        ?? jid.split('@')[0]
+
+      entries.push({ jid, name, isGroup: isJidGroup(jid) ?? false })
+    }
+
+    // Also add any contacts not in chats (rare, but possible)
+    for (const [jid, name] of contactNameMap) {
+      if (!seen.has(jid)) {
+        entries.push({ jid, name, isGroup: isJidGroup(jid) ?? false })
       }
     }
 
     bulkUpsertCache(entries)
     saveContactsCache()
     contactsReady = true
+    broadcastFn?.({ type: 'contacts_updated' })
     console.log(`[contacts] history sync: ${entries.length} contacts (total cache: ${getCachedContacts().size})`)
   })
 
   // Fired for incremental contact updates
   sock.ev.on('contacts.upsert', (contacts) => {
-    let added = 0
+    let changed = 0
     for (const c of contacts) {
       const jid = resolveJid(c as { id: string; jid?: string })
       if (!jid) continue
-      const name = (c as { name?: string; notify?: string }).name
-        ?? (c as { name?: string; notify?: string }).notify
-        ?? getCachedContacts().get(jid)?.name
-        ?? jid.split('@')[0]
-      const before = getCachedContacts().size
-      upsertCachedContact(jid, name, isJidGroup(jid))
-      if (getCachedContacts().size > before) added++
+      const name = resolveName(
+        c as { name?: string; notify?: string; verifiedName?: string },
+        getCachedContacts().get(jid)?.name ?? jid.split('@')[0],
+      )
+      const before = getCachedContacts().get(jid)?.name
+      upsertCachedContact(jid, name, isJidGroup(jid) ?? false)
+      if (getCachedContacts().get(jid)?.name !== before) changed++
     }
-    if (added > 0) {
+    if (changed > 0) {
       saveContactsCache()
-      console.log(`[contacts] upsert: +${added} (total: ${getCachedContacts().size})`)
+      broadcastFn?.({ type: 'contacts_updated' })
+      console.log(`[contacts] upsert: ${changed} updated (total: ${getCachedContacts().size})`)
     }
     if (!contactsReady) contactsReady = true
   })
@@ -127,14 +147,16 @@ async function connect(): Promise<void> {
     for (const u of updates) {
       const jid = resolveJid(u as { id: string; jid?: string })
       if (!jid) continue
-      const name = (u as { name?: string; notify?: string }).name
-        ?? (u as { name?: string; notify?: string }).notify
+      const name = resolveName(u as { name?: string; notify?: string; verifiedName?: string }, '')
       if (name) {
-        upsertCachedContact(jid, name, isJidGroup(jid))
+        upsertCachedContact(jid, name, isJidGroup(jid) ?? false)
         changed = true
       }
     }
-    if (changed) saveContactsCache()
+    if (changed) {
+      saveContactsCache()
+      broadcastFn?.({ type: 'contacts_updated' })
+    }
   })
 
   sock.ev.on('connection.update', async (update) => {
@@ -148,8 +170,9 @@ async function connect(): Promise<void> {
     if (connection === 'open') {
       if (sessionTimeoutId) { clearTimeout(sessionTimeoutId); sessionTimeoutId = null }
       retryCount = 0
-      setStatus('connected')
-      console.log(`[whatsapp] Connected as: ${sock?.user?.name ?? 'Unknown'}`)
+      const pushName = sock?.user?.name
+      setStatus('connected', undefined, pushName)
+      console.log(`[whatsapp] Connected as: ${pushName ?? 'Unknown'}`)
 
       // Always refresh groups on connect — they're always fetchable
       try {
@@ -161,6 +184,7 @@ async function connect(): Promise<void> {
         }))
         bulkUpsertCache(entries)
         saveContactsCache()
+        broadcastFn?.({ type: 'contacts_updated' })
         console.log(`[contacts] groups: ${entries.length} (total cache: ${getCachedContacts().size})`)
       } catch (err) {
         console.error('[whatsapp] Failed to fetch groups:', err)
