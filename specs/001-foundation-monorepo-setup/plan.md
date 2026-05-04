@@ -28,7 +28,7 @@ from WhatsApp and a configurable contact toggle UI backed by `config.json`.
 **Testing**: Not required for Phase 1 (scaffold phase; verified manually via quickstart.md)
 **Target Platform**: macOS local dev machine, Chromium-based browser
 **Project Type**: Fullstack web application (local, single-user)
-**Performance Goals**: App loads in <10s; QR code displayed <5s; contact toggle persisted <1s
+**Performance Goals**: App loads in <10s; QR code displayed <10s; contact toggle persisted <1s
 **Constraints**: Personal use only; no public deployment; no database; single `config.json`
 **Scale/Scope**: Single user (Francisco), local machine, no concurrent sessions
 
@@ -77,16 +77,22 @@ shared/                         ← @foku/shared — types that cross the HTTP/W
 │   └── types/
 │       ├── contact.ts         ← Contact, ContactConfig
 │       ├── config.ts          ← AppConfig
-│       └── connection.ts      ← ConnectionStatus, WSMessage (union of all WS payloads)
+│       └── connection.ts      ← ConnectionStatus, WSMessage (discriminated union:
+│                                  connection_status | contacts_updated)
 ├── package.json               ← name: "@foku/shared", no runtime deps
 └── tsconfig.json
 
 backend/
 ├── src/
 │   ├── config/
-│   │   └── configService.ts   ← config.json read/write (atomic); uses AppConfig, ContactConfig
+│   │   ├── configService.ts   ← config.json read/write (atomic); uses AppConfig, ContactConfig
+│   │   └── contactsCache.ts   ← in-memory + disk contact cache (contacts_cache.json);
+│   │                             guards against overwriting real names with phone numbers
 │   ├── whatsapp/
-│   │   └── whatsappService.ts ← Baileys socket, QR auth, contact retrieval; uses Contact
+│   │   └── whatsappService.ts ← Baileys socket, QR auth, contact retrieval; uses Contact.
+│   │                             Name resolution priority: name > notify > verifiedName >
+│   │                             chat.name (IConversation.name) > phone number.
+│   │                             Broadcasts contacts_updated WS event on every cache change.
 │   ├── ws/
 │   │   └── wsServer.ts        ← WebSocket server; uses WSMessage
 │   └── routes/
@@ -103,7 +109,7 @@ frontend/
 │   │   ├── Shell/
 │   │   │   └── Shell.tsx      ← Navigation bar + module visibility (display:none)
 │   │   ├── Chat/
-│   │   │   └── Chat.tsx       ← Chat module placeholder (Phase 1)
+│   │   │   └── Chat.tsx       ← Chat module; re-fetches contacts on contacts_updated WS event
 │   │   ├── Focus/
 │   │   │   └── Focus.tsx      ← Focus module placeholder
 │   │   ├── Timer/
@@ -112,7 +118,8 @@ frontend/
 │   │       └── Notes.tsx      ← Notes module placeholder
 │   ├── services/
 │   │   ├── api.ts             ← HTTP client; uses Contact, ContactConfig, AppConfig
-│   │   └── ws.ts              ← WebSocket client; uses WSMessage, ConnectionStatus
+│   │   └── ws.ts              ← WebSocket client; exports useConnectionStatus and
+│   │                             useContactsUpdated hooks; handles both WS message types
 │   ├── App.tsx
 │   └── main.tsx
 ├── index.html

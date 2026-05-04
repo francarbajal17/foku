@@ -38,14 +38,25 @@ export function getCachedContacts(): Map<string, CachedContact> {
   return cache
 }
 
+function looksLikePhoneNumber(name: string): boolean {
+  return /^\d+$/.test(name)
+}
+
 export function upsertCachedContact(jid: string, name: string, isGroup: boolean): void {
   const existing = cache.get(jid)
-  if (existing && existing.name === name) return // no change
+  if (existing) {
+    if (existing.name === name) return
+    // Don't downgrade a real name to a phone number
+    if (looksLikePhoneNumber(name) && !looksLikePhoneNumber(existing.name)) return
+  }
   cache.set(jid, { jid, name, isGroup })
 }
 
 export function bulkUpsertCache(entries: CachedContact[]): void {
   for (const e of entries) {
+    const existing = cache.get(e.jid)
+    // Don't overwrite a real name with a phone-number fallback
+    if (existing && looksLikePhoneNumber(e.name) && !looksLikePhoneNumber(existing.name)) continue
     cache.set(e.jid, e)
   }
 }

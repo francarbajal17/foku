@@ -95,13 +95,14 @@ reopen it, verify the toggle state is unchanged.
 - **FR-004**: After QR code is scanned, the app MUST confirm the connected state visually and stop displaying the QR code.
 - **FR-005**: The app MUST persist the WhatsApp session so that subsequent launches do not require re-scanning the QR code. If an existing session fails to connect within 10 seconds of app start, the app MUST treat it as invalid, delete the stored session, and fall back to the QR code flow.
 - **FR-006**: If the saved session is permanently invalidated (e.g., the user logged out from another device), the app MUST delete the stored session and show the QR code flow. For transient disconnections (network issues, server restarts), the app MUST retry using the existing session without showing the QR code.
-- **FR-007**: When connected to WhatsApp, the app MUST display a loading indicator while the contact list is being retrieved. Once retrieval is complete, the full list of contacts and groups MUST be displayed. The loading indicator MUST NOT be shown after the list is ready.
+- **FR-007**: When connected to WhatsApp, the app MUST display a loading indicator while the contact list is being retrieved. Once retrieval is complete, the full list of contacts and groups MUST be displayed. The loading indicator MUST NOT be shown after the list is ready. If the backend pushes a `contacts_updated` WebSocket event after the initial load (e.g., when WhatsApp sends push names asynchronously), the frontend MUST silently re-fetch and update the displayed list without showing the loading indicator again.
 - **FR-008**: The user MUST be able to toggle any contact or group on or off in the configurable list.
 - **FR-009**: The configured contact selection MUST be written to persistent storage immediately on change.
 - **FR-010**: On every launch, the app MUST restore the contact selection exactly as it was at the end of the previous session.
 - **FR-011**: When the WhatsApp connection is lost unexpectedly, the app MUST automatically attempt to reconnect silently up to 3 times. If all retries fail, it MUST display a persistent error indicator. No user-triggered "Reconnect" button is required — recovery is fully automatic.
 - **FR-012**: The contact management interface MUST provide a "Refresh" action that re-fetches the contact list from WhatsApp without requiring an app restart. The loading indicator (FR-007) MUST be shown during the refresh.
 - **FR-013**: When connected, the app MUST display the WhatsApp account name (push name) in the connection area — e.g., "Conectado como Francisco". The phone number MUST NOT be shown.
+- **FR-014**: Contact and group names MUST display the human-readable WhatsApp name, resolved in this priority order: address-book name (`name`) → push name (`notify`) → verified name (`verifiedName`) → conversation name (`chat.name`). A raw phone number MUST only appear as a last resort when none of the above is available. A real name already stored in the cache MUST NOT be overwritten by a phone-number fallback.
 
 ### Key Entities
 
@@ -119,7 +120,7 @@ reopen it, verify the toggle state is unchanged.
 - **SC-001**: Francisco can launch the app and navigate across all four sections within 10 seconds of the browser opening.
 - **SC-002**: On first launch, the WhatsApp QR code is displayed within 10 seconds of the browser tab opening.
 - **SC-003**: After one QR scan, Francisco never needs to scan again on any subsequent launch (until WhatsApp invalidates the session externally). The connection MUST be active within 10 seconds of the browser tab opening when resuming an existing session.
-- **SC-004**: The contact management interface shows 100% of the contacts and groups visible in Francisco's WhatsApp account.
+- **SC-004**: The contact management interface shows 100% of the contacts and groups visible in Francisco's WhatsApp account, each displayed with their human-readable name (not a raw phone number) whenever WhatsApp provides one.
 - **SC-005**: A contact toggle change takes effect and is confirmed as persisted in under 1 second.
 - **SC-006**: After restarting the app, the contact selection matches the state at the end of the previous session with 100% accuracy.
 - **SC-007**: No action in one navigation section causes visible side effects in another section (timer does not reset, notes text does not clear).

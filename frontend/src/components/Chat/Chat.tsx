@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import type { Contact } from '@foku/shared'
-import { useConnectionStatus } from '../../services/ws.ts'
+import { useConnectionStatus, useContactsUpdated } from '../../services/ws.ts'
 import { getContacts, refreshContacts, patchContactConfig } from '../../services/api.ts'
 import ContactList from './ContactList.tsx'
 
 export default function Chat() {
-  const { status, qr } = useConnectionStatus()
+  const { status, qr, accountName } = useConnectionStatus()
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [contacts, setContacts] = useState<Contact[]>([])
   const [loadingContacts, setLoadingContacts] = useState(false)
@@ -36,6 +36,11 @@ export default function Chat() {
       fetchContacts()
     }
   }, [status, fetchContacts])
+
+  // Re-fetch silently when the server notifies that contacts were updated
+  useContactsUpdated(useCallback(() => {
+    if (status === 'connected') fetchContacts()
+  }, [status, fetchContacts]))
 
   const handleToggle = useCallback(async (jid: string, enabled: boolean) => {
     // Optimistic update
@@ -79,6 +84,9 @@ export default function Chat() {
 
       {status === 'connected' && (
         <div>
+          {accountName && (
+            <p style={{ color: '#4caf50', marginBottom: '16px' }}>Conectado como {accountName}</p>
+          )}
           <ContactList
             contacts={contacts}
             loading={loadingContacts}

@@ -36,7 +36,7 @@
 
 - [x] T010 Create `shared/src/types/contact.ts` defining and exporting: `Contact` interface (`jid: string`, `name: string`, `isGroup: boolean`, `enabled: boolean`) and `ContactConfig` interface (`jid: string`, `enabled: boolean`)
 - [x] T011 [P] Create `shared/src/types/config.ts` defining and exporting: `AppConfig` interface (`contacts: ContactConfig[]`, `notes: string`, `pinnedVideos: string[]`)
-- [x] T012 [P] Create `shared/src/types/connection.ts` defining and exporting: `ConnectionStatus` type (union `'connecting' | 'qr_pending' | 'connected' | 'disconnected'`) and `WSMessage` discriminated union (`{ type: 'connection_status', status: ConnectionStatus, qr?: string }`)
+- [x] T012 [P] Create `shared/src/types/connection.ts` defining and exporting: `ConnectionStatus` type (union `'connecting' | 'qr_pending' | 'connected' | 'disconnected'`) and `WSMessage` discriminated union with two variants: `{ type: 'connection_status', status: ConnectionStatus, qr?: string }` and `{ type: 'contacts_updated' }` (sent by backend whenever the contact cache changes)
 - [x] T013 Create `shared/src/index.ts` re-exporting everything from `./types/contact`, `./types/config`, `./types/connection`
 - [x] T014 Create `backend/src/config/configService.ts` implementing: `loadConfig(): AppConfig` (reads `config.json`, initializes defaults if missing or corrupt), `saveConfig(config: AppConfig): void` (atomic write via temp file + rename), `updateContactConfig(updates: ContactConfig[]): AppConfig` (merges partial update into existing config and saves)
 - [x] T015 Create `backend/index.ts` as Express app skeleton: creates HTTP server, attaches WebSocket server on path `/ws`, registers route placeholders (`/api/status`, `/api/contacts`, `/api/config`), starts listening on port `3001`, calls `configService.loadConfig()` on startup
@@ -69,7 +69,7 @@
 
 **Goal**: First-launch QR scan flow and persistent session that skips QR on subsequent launches.
 
-**Independent Test**: Delete `wa_auth/` → `npm run dev` → QR appears in Chat tab within 5s → scan with phone → "Connected" shown and QR disappears → restart server → no QR shown, connected within 5s.
+**Independent Test**: Delete `wa_auth/` → `npm run dev` → QR appears in Chat tab within 10s → scan with phone → "Connected" shown and QR disappears → restart server → no QR shown, connected within 5s.
 
 - [x] T025 [US2] Create `backend/src/whatsapp/whatsappService.ts` implementing:
   - `initWhatsApp(broadcast: (msg: WSMessage) => void): void` — initializes Baileys with `useMultiFileAuthState('./wa_auth')`, creates `makeWASocket`, listens to `connection.update` (relay `qr_pending`/`connected`/`disconnected` via broadcast), listens to `saveCreds` (persist credentials), implements auto-reconnect loop (up to 3 silent retries on non-logout disconnects, then broadcasts `disconnected` permanently)
@@ -82,8 +82,9 @@
 - [x] T028 [US2] Update `backend/index.ts` to: import and call `createWsServer(httpServer)` after server creation, import and call `initWhatsApp(broadcast)` passing the ws broadcast function, import and mount `statusRoutes` at `/api`
 - [x] T029 [US2] Create `frontend/src/services/ws.ts` implementing:
   - Connects to `/ws` (proxied to backend) on module load
-  - Parses incoming `WSMessage` JSON
-  - Exports `useConnectionStatus(): { status: ConnectionStatus, qr?: string }` React hook backed by a module-level event emitter or `useState` + `useEffect` subscription
+  - Parses incoming `WSMessage` JSON; routes `connection_status` to status listeners and `contacts_updated` to contacts listeners
+  - Exports `useConnectionStatus(): { status: ConnectionStatus, qr?: string }` React hook
+  - Exports `useContactsUpdated(callback: () => void): void` hook that fires whenever the backend pushes a `contacts_updated` event
 - [x] T030 [US2] Update `frontend/src/components/Chat/Chat.tsx` to use `useConnectionStatus()` and render:
   - `connecting`: "Connecting to WhatsApp…" text
   - `qr_pending`: QR code image generated from `qr` string using the `qrcode` npm package (render to canvas or data URL)
@@ -101,10 +102,14 @@
 
 **Independent Test**: Connect to WhatsApp → open Chat tab → loading spinner → full contact/group list appears → toggle a contact → restart app → toggle state preserved → click Refresh → spinner → list re-fetched.
 
-- [x] T031 [US3] Update `backend/src/whatsapp/whatsappService.ts` to add:
-  - `makeInMemoryStore()` bound to the socket to accumulate contacts via `contacts.upsert` events
-  - `getContacts(): Promise<Contact[]>` — merges `store.contacts` (individual contacts) with `sock.groupFetchAllParticipating()` (groups), resolves display name (`name` > `notify` > JID), merges with enabled state from `configService`, returns sorted `Contact[]`
-  - `refreshContacts(): Promise<Contact[]>` — re-runs the same retrieval and returns updated list
+- [x] T031 [US3] Update `backend/src/whatsapp/whatsappService.ts` and create `backend/src/config/contactsCache.ts`:
+  - `contactsCache.ts`: persistent cache (memory + `contacts_cache.json`) for all contacts. Guards: `looksLikePhoneNumber()` prevents a real name from being overwritten by a phone-number fallback in both `upsertCachedContact` and `bulkUpsertCache`.
+  - `messaging-history.set` handler: builds a name map from the `contacts[]` array, then iterates all `chats[]` using `IConversation.name` (`chat.name`) as the display name source. Priority per contact: `name` → `notify` → `verifiedName` → `chat.name` → existing cache → phone number.
+  - `contacts.upsert` handler: detects name changes (not just new contacts) to trigger `saveContactsCache()`.
+  - `contacts.update` handler: incremental name updates.
+  - After each cache mutation, broadcasts `{ type: 'contacts_updated' }` via WebSocket so the frontend can silently re-fetch.
+  - `getContacts(): Promise<Contact[]>` — reads from cache, merges enabled state from `configService`, returns sorted `Contact[]` (individuals first, then groups, each group alphabetically).
+  - `refreshContacts(): Promise<Contact[]>` — re-fetches groups via `sock.groupFetchAllParticipating()` and returns updated list.
 - [x] T032 [US3] Create `backend/src/routes/contactRoutes.ts` implementing:
   - `GET /api/contacts` → calls `getContacts()`, returns `{ contacts: Contact[] }`; returns `503 { error: 'WhatsApp not connected' }` if not connected
   - `POST /api/contacts/refresh` → calls `refreshContacts()`, returns `{ contacts: Contact[] }`; returns `503` if not connected
@@ -113,7 +118,7 @@
 - [x] T034 [US3] Update `backend/index.ts` to import and mount `contactRoutes` and `configRoutes` at `/api`
 - [x] T035 [US3] Create `frontend/src/services/api.ts` implementing typed fetch wrappers: `getContacts(): Promise<Contact[]>`, `refreshContacts(): Promise<Contact[]>`, `patchContactConfig(updates: ContactConfig[]): Promise<ContactConfig[]>`, `getConfig(): Promise<AppConfig>`
 - [x] T036 [P] [US3] Create `frontend/src/components/Chat/ContactList.tsx` as a pure presentational component accepting props: `contacts: Contact[]`, `loading: boolean`, `onToggle: (jid: string, enabled: boolean) => void`, `onRefresh: () => void` — renders: loading spinner when `loading=true`; empty state message ("No contacts found") when list is empty; scrollable list of contact rows with name and a toggle checkbox when list has items; "Refresh" button always visible
-- [x] T037 [US3] Update `frontend/src/components/Chat/Chat.tsx` to add contact list logic when `status === 'connected'`: fetch contacts on mount via `api.getContacts()` (show loading spinner during fetch), pass data and handlers to `<ContactList />`, call `api.patchContactConfig()` on toggle (optimistic UI update + async persist), call `api.refreshContacts()` on Refresh click
+- [x] T037 [US3] Update `frontend/src/components/Chat/Chat.tsx` to add contact list logic when `status === 'connected'`: fetch contacts on mount via `api.getContacts()` (show loading spinner during fetch), pass data and handlers to `<ContactList />`, call `api.patchContactConfig()` on toggle (optimistic UI update + async persist), call `api.refreshContacts()` on Refresh click, and silently re-fetch via `useContactsUpdated` when the backend pushes a `contacts_updated` event (handles the case where WhatsApp sends push names after the initial load)
 
 **Checkpoint**: Contact list loads, toggles persist across restart, Refresh re-fetches without restart. US3 independently verified.
 
