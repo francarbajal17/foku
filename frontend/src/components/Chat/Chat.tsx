@@ -1,106 +1,84 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
-import type { Contact } from '@foku/shared'
-import { useConnectionStatus, useContactsUpdated } from '../../services/ws.ts'
-import { getContacts, refreshContacts, patchContactConfig } from '../../services/api.ts'
-import ContactList from './ContactList.tsx'
+import { useState } from 'react'
+import { useConnectionStatus } from '../../services/ws.ts'
+import ConversarPopup from './ConversarPopup.tsx'
+import ConversationView from './ConversationView.tsx'
 
 export default function Chat() {
   const { status, qr, accountName } = useConnectionStatus()
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const [contacts, setContacts] = useState<Contact[]>([])
-  const [loadingContacts, setLoadingContacts] = useState(false)
+  const [conversarOpen, setConversarOpen] = useState(false)
+  const [activeJid, setActiveJid] = useState<string | null>(null)
 
-  // Render QR code to canvas when qr_pending
-  useEffect(() => {
-    if (status !== 'qr_pending' || !qr || !canvasRef.current) return
-    import('qrcode').then((QRCode) => {
-      QRCode.toCanvas(canvasRef.current!, qr, { width: 256 })
-    })
-  }, [status, qr])
-
-  // Fetch contacts when connected
-  const fetchContacts = useCallback(async () => {
-    setLoadingContacts(true)
-    try {
-      const list = await getContacts()
-      setContacts(list)
-    } catch {
-      // Connection not ready yet — keep loading state
-    } finally {
-      setLoadingContacts(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    if (status === 'connected') {
-      fetchContacts()
-    }
-  }, [status, fetchContacts])
-
-  // Re-fetch silently when the server notifies that contacts were updated
-  useContactsUpdated(useCallback(() => {
-    if (status === 'connected') fetchContacts()
-  }, [status, fetchContacts]))
-
-  const handleToggle = useCallback(async (jid: string, enabled: boolean) => {
-    // Optimistic update
-    setContacts((prev) =>
-      prev.map((c) => (c.jid === jid ? { ...c, enabled } : c))
-    )
-    try {
-      await patchContactConfig([{ jid, enabled }])
-    } catch {
-      // Revert on failure
-      setContacts((prev) =>
-        prev.map((c) => (c.jid === jid ? { ...c, enabled: !enabled } : c))
-      )
-    }
-  }, [])
-
-  const handleRefresh = useCallback(async () => {
-    setLoadingContacts(true)
-    try {
-      const list = await refreshContacts()
-      setContacts(list)
-    } finally {
-      setLoadingContacts(false)
-    }
-  }, [])
+  const containerStyle: React.CSSProperties = {
+    height: 'calc(100vh - 50px)',
+    display: 'flex',
+    flexDirection: 'column',
+  }
 
   return (
-    <div data-testid="chat-module" style={{ padding: '24px' }}>
+    <div data-testid="chat-module" style={containerStyle}>
       {status === 'connecting' && (
-        <p style={{ color: '#888' }}>Conectando a WhatsApp…</p>
-      )}
-
-      {status === 'qr_pending' && (
-        <div>
-          <p style={{ marginBottom: '16px' }}>
-            Escaneá el código QR con tu teléfono para conectar WhatsApp.
-          </p>
-          <canvas ref={canvasRef} />
+        <div style={{ padding: '24px', color: '#888' }}>
+          <p style={{ margin: 0 }}>Conectando a WhatsApp…</p>
         </div>
       )}
 
-      {status === 'connected' && (
-        <div>
-          {accountName && (
-            <p style={{ color: '#4caf50', marginBottom: '16px' }}>Conectado como {accountName}</p>
-          )}
-          <ContactList
-            contacts={contacts}
-            loading={loadingContacts}
-            onToggle={handleToggle}
-            onRefresh={handleRefresh}
-          />
+      {status === 'qr_pending' && (
+        <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px' }}>
+          <p style={{ margin: 0, color: '#aaa' }}>Escaneá el código QR con tu teléfono para conectar WhatsApp.</p>
+          {qr && <QRCanvas qr={qr} />}
         </div>
       )}
 
       {status === 'disconnected' && (
-        <p style={{ color: '#f44336' }}>
-          No se pudo conectar a WhatsApp. Reiniciá la app para intentar de nuevo.
-        </p>
+        <div style={{ padding: '24px' }}>
+          <p style={{ color: '#f44336', margin: 0 }}>No se pudo conectar a WhatsApp. Reiniciá la app para intentar de nuevo.</p>
+        </div>
+      )}
+
+      {status === 'connected' && !activeJid && (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px' }}>
+          {accountName && (
+            <p style={{ color: '#4caf50', margin: 0, fontSize: '13px' }}>Conectado como {accountName}</p>
+          )}
+          <button
+            onClick={() => setConversarOpen(true)}
+            style={{
+              background: '#1f5c36', color: '#fff', border: 'none',
+              borderRadius: '10px', padding: '14px 36px', fontSize: '16px',
+              fontWeight: 600, cursor: 'pointer', letterSpacing: '0.3px',
+            }}
+          >
+            Conversar
+          </button>
+        </div>
+      )}
+
+      {status === 'connected' && activeJid && (
+        <ConversationView
+          jid={activeJid}
+          onClose={() => setActiveJid(null)}
+        />
+      )}
+
+      {conversarOpen && (
+        <ConversarPopup
+          onContactSelect={(jid) => {
+            setActiveJid(jid)
+            setConversarOpen(false)
+          }}
+          onClose={() => setConversarOpen(false)}
+        />
       )}
     </div>
   )
+}
+
+function QRCanvas({ qr }: { qr: string }) {
+  const canvasRef = (canvas: HTMLCanvasElement | null) => {
+    if (!canvas || !qr) return
+    import('qrcode').then((QRCode) => {
+      QRCode.toCanvas(canvas, qr, { width: 256, margin: 2 })
+    })
+  }
+  return <canvas ref={canvasRef} />
 }
