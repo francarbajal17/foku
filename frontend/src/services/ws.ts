@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback } from 'react'
-import type { ConnectionStatus, WSMessage } from '@foku/shared'
+import type { ConnectionStatus, WSMessage, ChatMessage } from '@foku/shared'
 
 type ConnectionState = { status: ConnectionStatus; qr?: string; accountName?: string }
 
 let socket: WebSocket | null = null
 const statusListeners = new Set<(state: ConnectionState) => void>()
 const contactsListeners = new Set<() => void>()
+const chatHistoryListeners = new Set<(jid: string, messages: ChatMessage[]) => void>()
+const chatMessageListeners = new Set<(jid: string, message: ChatMessage) => void>()
 let lastState: ConnectionState = { status: 'connecting' }
 
 function getSocket(): WebSocket {
@@ -21,6 +23,10 @@ function getSocket(): WebSocket {
         statusListeners.forEach((fn) => fn(lastState))
       } else if (msg.type === 'contacts_updated') {
         contactsListeners.forEach((fn) => fn())
+      } else if (msg.type === 'chat_history') {
+        chatHistoryListeners.forEach((fn) => fn(msg.jid, msg.messages))
+      } else if (msg.type === 'chat_message') {
+        chatMessageListeners.forEach((fn) => fn(msg.jid, msg.message))
       }
     } catch {
       // ignore malformed messages
@@ -28,7 +34,6 @@ function getSocket(): WebSocket {
   }
 
   socket.onclose = () => {
-    // Attempt to reconnect after 2s
     setTimeout(() => getSocket(), 2000)
   }
 
@@ -45,11 +50,8 @@ export function useConnectionStatus(): ConnectionState {
 
   useEffect(() => {
     statusListeners.add(setState)
-    // Sync with latest state in case it changed before mount
     setState(lastState)
-    return () => {
-      statusListeners.delete(setState)
-    }
+    return () => { statusListeners.delete(setState) }
   }, [])
 
   return state
@@ -60,5 +62,21 @@ export function useContactsUpdated(onUpdate: () => void): void {
   useEffect(() => {
     contactsListeners.add(stable)
     return () => { contactsListeners.delete(stable) }
+  }, [stable])
+}
+
+export function useChatHistory(callback: (jid: string, messages: ChatMessage[]) => void): void {
+  const stable = useCallback(callback, [callback])
+  useEffect(() => {
+    chatHistoryListeners.add(stable)
+    return () => { chatHistoryListeners.delete(stable) }
+  }, [stable])
+}
+
+export function useChatMessage(callback: (jid: string, message: ChatMessage) => void): void {
+  const stable = useCallback(callback, [callback])
+  useEffect(() => {
+    chatMessageListeners.add(stable)
+    return () => { chatMessageListeners.delete(stable) }
   }, [stable])
 }

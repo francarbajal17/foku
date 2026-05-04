@@ -18,12 +18,14 @@ import {
   upsertCachedContact,
   bulkUpsertCache,
 } from '../config/contactsCache.js'
+import { onSocketReady as chatOnSocketReady } from '../chat/chatService.js'
 
 const AUTH_DIR = path.resolve(process.cwd(), 'wa_auth')
 const MAX_RETRIES = 3
 const SESSION_TIMEOUT_MS = 10_000
 
 let currentStatus: ConnectionStatus = 'connecting'
+let lastQr: string | undefined
 let sock: ReturnType<typeof makeWASocket> | null = null
 let broadcastFn: ((msg: WSMessage) => void) | null = null
 let retryCount = 0
@@ -31,10 +33,12 @@ let contactsReady = false
 let sessionTimeoutId: ReturnType<typeof setTimeout> | null = null
 
 export function getConnectionStatus(): ConnectionStatus { return currentStatus }
+export function getLastQr(): string | undefined { return lastQr }
 export function areContactsReady(): boolean { return contactsReady }
 
 function setStatus(status: ConnectionStatus, qr?: string, pushName?: string) {
   currentStatus = status
+  lastQr = qr  // persist so wsServer can include it on new connections
   broadcastFn?.({ type: 'connection_status', status, ...(qr ? { qr } : {}), ...(pushName ? { pushName } : {}) })
 }
 
@@ -191,6 +195,7 @@ async function connect(): Promise<void> {
       }
 
       contactsReady = true
+      chatOnSocketReady(sock!)
     }
 
     if (connection === 'close') {
@@ -276,4 +281,8 @@ export async function refreshContacts(): Promise<Contact[]> {
 
 export function getAccountName(): string {
   return sock?.user?.name ?? ''
+}
+
+export function getSock(): ReturnType<typeof makeWASocket> | null {
+  return sock
 }
